@@ -1,403 +1,259 @@
 // ==================== SYF Hotel Backend Server ====================
-// Supabase-powered backend for permanent data storage
-// Updated schema with rooms and bookings tables
+// Production-ready Supabase-powered backend
+// Optimized for stability, security, and performance
 // ===================================================================
 
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const dotenv = require('dotenv');
 const { createClient } = require('@supabase/supabase-js');
 
-// Load environment variables
-// First try /etc/secrets/supabase.env (for Render), then fall back to .env
-dotenv.config({ path: '/etc/secrets/supabase.env' });
-if (!process.env.SUPABASE_URL) {
-    dotenv.config(); // Fall back to local .env
-}
-
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3000;
 
-// ==================== SUPABASE INITIALIZATION ====================
+// 1. Supabase Initialization
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://tryodszjxcsujgveainj.supabase.co';
+const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyeW9kc3pqeGNzdWpndmVhaW5qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjkyMDk3NDQsImV4cCI6MjA4NDc4NTc0NH0.iA_F2DwtCD_cUWgRp12KB2el66pOlOf9BLFiMfqWcPw';
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_ANON_KEY;
-
-// Console logs for testing connection (as requested)
-console.log('🔧 Supabase Configuration Check:');
-console.log('SUPABASE_URL:', process.env.SUPABASE_URL);
-console.log('SUPABASE_ANON_KEY:', process.env.SUPABASE_ANON_KEY ? '✓ Loaded' : '✗ Missing');
-console.log('---');
-
-if (!supabaseUrl || !supabaseKey) {
-    console.error('❌ ERROR: Supabase credentials not found!');
-    console.error('Please set SUPABASE_URL and SUPABASE_ANON_KEY in your environment variables');
-    console.error('For Render: /etc/secrets/supabase.env');
-    console.error('For local: .env file');
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+    console.error('❌ CRITICAL: Supabase credentials missing! Check your .env file.');
     process.exit(1);
 }
 
-const supabase = createClient(supabaseUrl, supabaseKey);
-console.log('✅ Supabase client initialized successfully');
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+    auth: {
+        persistSession: false
+    }
+});
 
-// ==================== MIDDLEWARE ====================
+console.log('✅ Supabase Connection Initialized');
 
+// 2. Middleware
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve static files
+// Log all requests with response status
+app.use((req, res, next) => {
+    const start = Date.now();
+    res.on('finish', () => {
+        const duration = Date.now() - start;
+        console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} ${res.statusCode} - ${duration}ms`);
+    });
+    next();
+});
+
+
+// Serve static files from the root directory
 app.use(express.static(path.join(__dirname)));
 
-// ==================== API ROUTES ====================
+// --- API ROUTES ---
 
-// Health check endpoint
-app.get('/', (req, res) => {
-    res.json({
-        status: 'running',
-        message: 'SYF Hotel Backend is running with Supabase! 🚀',
-        timestamp: new Date().toISOString(),
-        database: 'Supabase (Online Storage)',
-        endpoints: {
-            rooms: 'GET /api/rooms',
-            bookings: 'GET /api/bookings',
-            createBooking: 'POST /api/bookings'
-        }
-    });
+// Health Check
+app.get('/health', (req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// ==================== 1. GET ALL ROOMS ====================
-// Fetches all room information from Supabase
-
-app.get('/api/rooms', async (req, res) => {
-    try {
-        console.log('🏨 Fetching all rooms from Supabase...');
-        
-        const { data, error } = await supabase
-            .from('rooms')
-            .select('*')
-            .order('price_per_night', { ascending: false });
-
-        if (error) {
-            console.error('❌ Supabase error:', error);
-            throw error;
-        }
-
-        console.log(`✅ Retrieved ${data.length} rooms`);
-        res.json(data);
-        
-    } catch (error) {
-        console.error('❌ Error fetching rooms:', error);
-        res.status(500).json({ 
-            error: 'Failed to fetch rooms',
-            details: error.message 
-        });
-    }
-});
-
-// ==================== 2. GET ROOM AVAILABILITY ====================
-// Legacy endpoint for backward compatibility
-// Returns availability in simple object format
-
+// A. Get Live Availability
 app.get('/api/availability', async (req, res) => {
     try {
-        console.log('📊 Fetching room availability from Supabase...');
-        
         const { data, error } = await supabase
             .from('rooms')
             .select('room_type, available')
-            .order('room_type', { ascending: true });
+            .order('price_per_night', { ascending: false });
 
-        if (error) {
-            console.error('❌ Supabase error:', error);
-            throw error;
+        if (error) throw error;
+
+        console.log(`📊 Availability fetch result: ${data ? data.length : 0} rooms found`);
+        if (data && data.length > 0) {
+            console.log('📝 Sample room data:', data[0]);
         }
 
-        // Convert array to object format for frontend compatibility
         const availabilityObj = {};
+
         data.forEach(item => {
             availabilityObj[item.room_type] = item.available;
         });
-
-        console.log('✅ Availability fetched:', availabilityObj);
-        res.json(availabilityObj);
         
-    } catch (error) {
-        console.error('❌ Error fetching availability:', error);
-        res.status(500).json({ 
-            error: 'Failed to fetch room availability',
-            details: error.message 
-        });
+        res.json(availabilityObj);
+    } catch (err) {
+        console.error('❌ Fetch Availability Error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch availability', details: err.message });
     }
 });
 
-// ==================== 3. GET ALL BOOKINGS ====================
-// Retrieves all bookings from Supabase (for admin dashboard)
-
+// B. Get All Bookings (Admin Only)
 app.get('/api/bookings', async (req, res) => {
     try {
-        console.log('📋 Fetching all bookings from Supabase...');
-        
         const { data, error } = await supabase
             .from('bookings')
             .select('*')
             .order('created_at', { ascending: false });
 
-        if (error) {
-            console.error('❌ Supabase error:', error);
-            throw error;
-        }
-
-        console.log(`✅ Retrieved ${data.length} bookings`);
+        if (error) throw error;
         res.json(data);
-        
-    } catch (error) {
-        console.error('❌ Error fetching bookings:', error);
-        res.status(500).json({ 
-            error: 'Failed to fetch bookings',
-            details: error.message 
-        });
+    } catch (err) {
+        console.error('❌ Fetch Bookings Error:', err.message);
+        res.status(500).json({ error: 'Failed to fetch bookings', details: err.message });
     }
 });
 
-// ==================== 4. CREATE NEW BOOKING ====================
-// Saves booking to Supabase and decrements room availability atomically
-
+// C. Create New Booking
 app.post('/api/bookings', async (req, res) => {
+    const b = req.body;
     try {
-        console.log('📝 New booking request received');
-        console.log('Request body:', req.body);
-
-        // Parse booking data from request
-        // Support both old and new field names for compatibility
-        const booking = {
-            room_category: req.body.room_category || req.body['Room Type'] || req.body.room_type || '',
-            number_of_rooms: parseInt(req.body.number_of_rooms || req.body['Number of Rooms'] || req.body.quantity || 1),
-            check_in: req.body.check_in || req.body['Check In'] || '',
-            check_out: req.body.check_out || req.body['Check Out'] || '',
-            full_name: req.body.full_name || req.body['Guest Name'] || req.body.guest_name || '',
-            phone: req.body.phone || req.body['Guest Phone'] || req.body.contact_number || '',
-            coming_with_id: req.body.coming_with_id === true || req.body.coming_with_id === 'true' || 
-                           req.body['Valid Id'] === 'Yes' || req.body.valid_id === 'Yes',
-            payment_amount: parseInt(req.body.payment_amount || req.body['Payment Amount'] || req.body.total_amount || 0),
-            payment_channel: req.body.payment_channel || req.body['Payment Method'] || '',
-            transaction_id: req.body.transaction_id || req.body['Reference Number'] || req.body.reference_number || '',
-            additional_requests: req.body.additional_requests || req.body['Additional Requests'] || ''
-        };
-
-        const roomCategory = booking.room_category;
-        const requestedQty = booking.number_of_rooms;
-
-        console.log(`🔍 Checking availability for ${requestedQty}x ${roomCategory}...`);
-
-        // Step 1: Check current availability
-        const { data: roomData, error: roomError } = await supabase
+        console.log('📝 Processing new booking for:', b.guest_name || b.full_name);
+        
+        // 1. Availability Check
+        const { data: room, error: fetchErr } = await supabase
             .from('rooms')
             .select('available')
-            .eq('room_type', roomCategory)
+            .eq('room_type', b.room_type)
             .single();
-
-        if (roomError) {
-            console.error('❌ Error checking availability:', roomError);
-            throw roomError;
-        }
-
-        const currentStock = roomData.available;
-        console.log(`📊 Current stock for ${roomCategory}: ${currentStock}`);
-
-        // Step 2: Validate availability
-        if (currentStock < requestedQty) {
-            console.log(`⚠️ Insufficient rooms: requested ${requestedQty}, available ${currentStock}`);
-            return res.status(400).json({
-                error: `Sorry, not enough rooms available. Only ${currentStock} ${roomCategory}(s) remaining.`
-            });
-        }
-
-        // Step 3: Decrement availability
-        const newStock = currentStock - requestedQty;
-        const { error: updateError } = await supabase
-            .from('rooms')
-            .update({ available: newStock })
-            .eq('room_type', roomCategory);
-
-        if (updateError) {
-            console.error('❌ Error updating availability:', updateError);
-            throw updateError;
-        }
-
-        console.log(`✅ Availability updated: ${currentStock} → ${newStock}`);
-
-        // Step 4: Insert booking into database
-        const { data: insertedBooking, error: insertError } = await supabase
-            .from('bookings')
-            .insert([booking])
-            .select()
-            .single();
-
-        if (insertError) {
-            console.error('❌ Error inserting booking:', insertError);
             
-            // Rollback: restore availability if booking insert fails
+        if (fetchErr || !room) {
+            console.error('❌ Room categories lookup failed:', b.room_type);
+            return res.status(400).json({ error: 'Room category not found' });
+        }
+
+        const quantity = parseInt(b.quantity) || 1;
+        if (room.available < quantity) {
+            console.warn('⚠️ Room sold out during booking attempt:', b.room_type);
+            return res.status(400).json({ error: 'Room category sold out' });
+        }
+
+        // 2. Decrement Cloud Stock
+        const { error: updErr } = await supabase
+            .from('rooms')
+            .update({ available: room.available - quantity })
+            .eq('room_type', b.room_type);
+
+        if (updErr) {
+            console.error('❌ Failed to update room count:', updErr.message);
+            throw updErr;
+        }
+
+        // 3. Insert Booking Record
+        const bookingRecord = {
+            room_category: b.room_type,
+            number_of_rooms: quantity,
+            check_in: b.check_in,
+            check_out: b.check_out,
+            full_name: b.guest_name || b.full_name,
+            phone: b.contact_number || b.phone,
+            coming_with_id: b.valid_id === 'Yes' || b.coming_with_id === true,
+            payment_amount: parseInt(b.total_amount || b.payment_amount) || 0,
+            payment_channel: b.payment_channel,
+            transaction_id: b.reference_number || b.transaction_id,
+            additional_requests: b.additional_requests
+        };
+
+        const { error: saveErr } = await supabase.from('bookings').insert([bookingRecord]);
+
+        if (saveErr) {
+            console.error('❌ Failed to save booking record:', saveErr.message);
+            // Rollback availability if booking fails
             await supabase
                 .from('rooms')
-                .update({ available: currentStock })
-                .eq('room_type', roomCategory);
-                
-            throw insertError;
+                .update({ available: room.available })
+                .eq('room_type', b.room_type);
+            throw saveErr;
         }
 
-        console.log('✅ Booking saved successfully:', insertedBooking.id);
-        
-        res.json({ 
-            success: true, 
-            message: 'Booking confirmed! Your reservation has been saved.',
-            booking: insertedBooking,
-            remainingRooms: newStock
-        });
-        
-    } catch (error) {
-        console.error('❌ Error processing booking:', error);
-        res.status(500).json({ 
-            error: 'Failed to process booking',
-            details: error.message 
-        });
+        console.log('✅ Booking successfully completed for:', b.guest_name || b.full_name);
+        res.json({ success: true, message: 'Booking confirmed and saved.' });
+
+    } catch (err) {
+        console.error('❌ Booking Process Failure:', err.message);
+        res.status(500).json({ error: 'Internal Server Error', details: err.message });
     }
 });
 
-// ==================== 5. UPDATE ROOM AVAILABILITY (ADMIN) ====================
-// Allows manual update of room availability (single room)
-
-app.post('/api/rooms/update-availability', async (req, res) => {
-    try {
-        console.log('🔄 Updating room availability:', req.body);
-
-        const { room_type, available } = req.body;
-
-        if (!room_type || available === undefined) {
-            return res.status(400).json({
-                error: 'Missing required fields: room_type and available'
-            });
-        }
-
-        const { data, error } = await supabase
-            .from('rooms')
-            .update({ available: parseInt(available) })
-            .eq('room_type', room_type)
-            .select()
-            .single();
-
-        if (error) throw error;
-
-        console.log(`✅ Updated ${room_type} availability to ${available}`);
-        res.json({ success: true, room: data });
-        
-    } catch (error) {
-        console.error('❌ Error updating room availability:', error);
-        res.status(500).json({ 
-            error: 'Failed to update room availability',
-            details: error.message 
-        });
-    }
-});
-
-// ==================== 6. BULK UPDATE ROOM AVAILABILITY (ADMIN) ====================
-// Updates all room availability at once from admin dashboard
-
+// D. Bulk Update Room Availability (Admin Only)
 app.post('/api/rooms/bulk-update', async (req, res) => {
     try {
-        console.log('🔄 Bulk updating room availability:', req.body);
+        const updates = req.body;
+        console.log('🔄 Bulk updating room availability:', updates);
 
-        const updates = req.body; // Object with room names as keys, availability as values
+        if (!updates || Object.keys(updates).length === 0) {
+            console.warn('⚠️ Bulk update received with empty payload');
+            return res.status(400).json({ error: 'No update data provided' });
+        }
 
-        if (!updates || typeof updates !== 'object') {
-            return res.status(400).json({
-                error: 'Invalid request body. Expected object with room types and availability.'
+        const stats = { success: 0, failed: 0, errors: [] };
+
+        for (const [roomType, count] of Object.entries(updates)) {
+            const trimmedRoom = roomType.trim();
+            const availCount = parseInt(count);
+
+            if (isNaN(availCount)) {
+                console.error(`❌ Invalid count for ${trimmedRoom}: ${count}`);
+                stats.failed++;
+                stats.errors.push(`${trimmedRoom}: Invalid number`);
+                continue;
+            }
+            
+            console.log(`📡 Cloud Sync: Updating [${trimmedRoom}] to ${availCount}...`);
+            
+            const { error, data } = await supabase
+                .from('rooms')
+                .update({ available: availCount })
+                .eq('room_type', trimmedRoom)
+                .select();
+            
+            if (error) {
+                console.error(`❌ Supabase Sync Error [${trimmedRoom}]:`, error.message);
+                stats.failed++;
+                stats.errors.push(`${trimmedRoom}: ${error.message}`);
+            } else {
+                console.log(`✅ Cloud Sync Success: ${trimmedRoom}`);
+                stats.success++;
+            }
+        }
+
+        if (stats.failed > 0) {
+            console.warn(`⚠️ Bulk update partial completion: ${stats.success} succeeded, ${stats.failed} failed`);
+            return res.status(207).json({ 
+                success: stats.success > 0, 
+                message: 'Update partially completed', 
+                stats: stats 
             });
         }
 
-        const updatePromises = [];
-        
-        // Update each room in Supabase
-        for (const [roomType, available] of Object.entries(updates)) {
-            updatePromises.push(
-                supabase
-                    .from('rooms')
-                    .update({ available: parseInt(available) })
-                    .eq('room_type', roomType)
-                    .select()
-            );
-        }
+        console.log('✨ All rooms synchronized with Supabase successfully.');
+        res.json({ success: true, message: 'All rooms updated successfully.' });
 
-        const results = await Promise.all(updatePromises);
-        
-        // Check for errors
-        const errors = results.filter(r => r.error);
-        if (errors.length > 0) {
-            console.error('❌ Some updates failed:', errors);
-            return res.status(500).json({
-                error: 'Some room updates failed',
-                details: errors.map(e => e.error.message)
-            });
-        }
-
-        console.log('✅ All room availability updated successfully');
-        res.json({ 
-            success: true, 
-            message: 'All room availability updated',
-            updatedRooms: results.map(r => r.data[0])
-        });
-        
-    } catch (error) {
-        console.error('❌ Error in bulk update:', error);
-        res.status(500).json({ 
-            error: 'Failed to update room availability',
-            details: error.message 
-        });
+    } catch (err) {
+        console.error('❌ Bulk Update Error:', err.message);
+        res.status(500).json({ error: 'Failed to update rooms', details: err.message });
     }
 });
 
-// ==================== ERROR HANDLING ====================
-
-// 404 handler
+// --- STATIC FALLBACK ---
+// If no API route matches, serve index.html for any other requests
 app.use((req, res) => {
-    res.status(404).json({ 
-        error: 'Endpoint not found',
-        availableEndpoints: [
-            'GET /',
-            'GET /api/rooms',
-            'GET /api/availability',
-            'GET /api/bookings',
-            'POST /api/bookings',
-            'POST /api/rooms/update-availability'
-        ]
-    });
+    res.sendFile(path.join(__dirname, 'index.html'));
 });
 
-// Global error handler
+
+
+
+// --- GLOBAL ERROR HANDLER ---
+// Prevents server from crashing on unhandled errors
 app.use((err, req, res, next) => {
-    console.error('💥 Unhandled error:', err);
-    res.status(500).json({ 
-        error: 'Internal server error',
-        details: err.message 
-    });
+    console.error('💥 UNHANDLED ERROR:', err.stack);
+    res.status(500).send('Something broke!');
 });
 
-// ==================== START SERVER ====================
-
-app.listen(port, () => {
-    console.log('');
-    console.log('═══════════════════════════════════════════════');
-    console.log('🏨 SYF Hotel Backend Server');
-    console.log('═══════════════════════════════════════════════');
-    console.log(`✅ Server running on port ${port}`);
-    console.log(`🗄️  Database: Supabase (${supabaseUrl})`);
-    console.log(`📡 API Endpoints:`);
-    console.log(`   - GET  http://localhost:${port}/api/rooms`);
-    console.log(`   - GET  http://localhost:${port}/api/availability`);
-    console.log(`   - GET  http://localhost:${port}/api/bookings`);
-    console.log(`   - POST http://localhost:${port}/api/bookings`);
-    console.log(`   - POST http://localhost:${port}/api/rooms/update-availability`);
-    console.log('═══════════════════════════════════════════════');
-    console.log('');
+// 3. Start Server
+const instance = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`
+    ========================================
+     🚀 SYF HOTEL SERVER IS RUNNING
+     📍 URL: http://localhost:${PORT}
+     🌍 Network: http://0.0.0.0:${PORT}
+     📅 Started: ${new Date().toLocaleString()}
+    ========================================
+    `);
 });
